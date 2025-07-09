@@ -1,0 +1,320 @@
+// /backend/src/controllers/botController.js
+/**
+ * Controller para gerenciar Bot WhatsApp
+ * Fornece endpoints para start/stop, status, QR code e logs
+ */
+
+const { spawn, exec } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+class BotController {
+    constructor() {
+        this.botProcess = null;
+        this.connectionStatus = 'disconnected';
+        this.qrCode = null;
+        this.lastActivity = null;
+        this.logs = [];
+        this.startTime = null;
+        
+        // Configurações
+        this.botPath = path.join(__dirname, '../../../bot-whatsapp');
+        this.maxLogs = 100; // Máximo de logs para manter
+        
+        // Verificar se bot já está rodando ao iniciar
+        this.checkExistingBot();
+    }
+
+    /**
+     * Verificar se bot já está rodando
+     */
+    async checkExistingBot() {
+        try {
+            exec('ps aux | grep "bot-whatsapp" | grep -v grep', (error, stdout) => {
+                if (stdout && stdout.includes('node')) {
+                    this.connectionStatus = 'connected';
+                    this.startTime = new Date();
+                    this.addLog('Bot detectado rodando no sistema');
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao verificar bot existente:', error);
+        }
+    }
+
+    /**
+     * Adicionar log
+     */
+    addLog(message) {
+        const log = {
+            timestamp: new Date().toISOString(),
+            message: message
+        };
+        
+        this.logs.unshift(log);
+        
+        // Manter apenas os últimos logs
+        if (this.logs.length > this.maxLogs) {
+            this.logs = this.logs.slice(0, this.maxLogs);
+        }
+        
+        console.log(`[BOT-LOG] ${message}`);
+    }
+
+    /**
+     * GET /api/bot/status - Obter status do bot
+     */
+    async getStatus(req, res) {
+        try {
+            const uptime = this.startTime ? 
+                Math.floor((new Date() - this.startTime) / 1000) : 0;
+            
+            const status = {
+                status: this.connectionStatus,
+                uptime: uptime,
+                startTime: this.startTime,
+                lastActivity: this.lastActivity,
+                qrCode: this.qrCode,
+                logsCount: this.logs.length,
+                processId: this.botProcess ? this.botProcess.pid : null
+            };
+
+            res.json({
+                success: true,
+                data: status
+            });
+        } catch (error) {
+            console.error('Erro ao obter status:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Erro interno do servidor'
+            });
+        }
+    }
+
+    /**
+     * POST /api/bot/start - Iniciar bot
+     */
+    async startBot(req, res) {
+        try {
+            if (this.connectionStatus === 'connected' && this.botProcess) {
+                return res.json({
+                    success: false,
+                    message: 'Bot já está rodando'
+                });
+            }
+
+            // Parar processo existente se houver
+            await this.stopBotProcess();
+
+            // Iniciar novo processo
+            this.connectionStatus = 'connecting';
+            this.qrCode = null;
+            this.addLog('Iniciando bot WhatsApp...');
+
+            this.botProcess = spawn('node', ['src/index.js'], {
+                cwd: this.botPath,
+                stdio: ['pipe', 'pipe', 'pipe'],
+                detached: false
+            });
+
+            // Capturar stdout para QR Code e logs
+            this.botProcess.stdout.on('data', (data) => {
+                const output = data.toString();
+                
+                // Detectar QR Code
+                if (output.includes('█') || output.includes('▄') || output.includes('▀') || output.includes('▐') || output.includes('░') || output.includes('▒') || output.includes('▓') || (output.match(/[█▄▀▐░▒▓■□▪▫]/))) {
+                    this.qrCode = output;
+                    this.connectionStatus = 'waiting_qr';
+                    this.addLog('QR Code gerado - aguardando escaneamento');
+                }
+                
+                // Detectar conexão bem-sucedida
+                if (output.includes('conectado com sucesso') || output.includes('✅')) {
+                    this.connectionStatus = 'connected';
+                    this.startTime = new Date();
+                    this.qrCode = null;
+                    this.addLog('Bot conectado com sucesso');
+                }
+                
+                this.addLog(`STDOUT: ${output.trim()}`);
+            });
+
+            // Capturar stderr
+            this.botProcess.stderr.on('data', (data) => {
+                const error = data.toString();
+                this.addLog(`ERRO: ${error.trim()}`);
+                
+                if (error.includes('ENOTFOUND') || error.includes('connection')) {
+                    this.connectionStatus = 'error';
+                }
+            });
+
+            // Monitorar processo
+            this.botProcess.on('close', (code) => {
+                this.addLog(`Processo do bot encerrado com código: ${code}`);
+                this.connectionStatus = 'disconnected';
+                this.botProcess = null;
+                this.qrCode = null;
+            });
+
+            this.botProcess.on('error', (error) => {
+                this.addLog(`Erro no processo: ${error.message}`);
+                this.connectionStatus = 'error';
+            });
+
+            res.json({
+                success: true,
+                message: 'Bot iniciado com sucesso',
+                data: {
+                    status: this.connectionStatus,
+                    pid: this.botProcess.pid
+                }
+            });
+
+        } catch (error) {
+            console.error('Erro ao iniciar bot:', error);
+            this.connectionStatus = 'error';
+            this.addLog(`Erro ao iniciar: ${error.message}`);
+            
+            res.status(500).json({
+                success: false,
+                message: 'Erro ao iniciar bot: ' + error.message
+            });
+        }
+    }
+
+    /**
+     * POST /api/bot/stop - Parar bot
+     */
+    async stopBot(req, res) {
+        try {
+            await this.stopBotProcess();
+            
+            res.json({
+                success: true,
+                message: 'Bot parado com sucesso'
+            });
+        } catch (error) {
+            console.error('Erro ao parar bot:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Erro ao parar bot: ' + error.message
+            });
+        }
+    }
+
+    /**
+     * Parar processo do bot
+     */
+    async stopBotProcess() {
+        return new Promise((resolve) => {
+            if (this.botProcess) {
+                this.addLog('Parando processo do bot...');
+                
+                this.botProcess.kill('SIGTERM');
+                
+                setTimeout(() => {
+                    if (this.botProcess && !this.botProcess.killed) {
+                        this.addLog('Forçando encerramento do processo...');
+                        this.botProcess.kill('SIGKILL');
+                    }
+                    resolve();
+                }, 3000);
+            } else {
+                // Tentar matar processos por nome
+                exec('pkill -f "bot-whatsapp"', () => {
+                    this.addLog('Tentativa de parar processos existentes');
+                    resolve();
+                });
+            }
+            
+            this.connectionStatus = 'disconnected';
+            this.botProcess = null;
+            this.qrCode = null;
+            this.startTime = null;
+        });
+    }
+
+    /**
+     * GET /api/bot/qr - Obter QR Code atual
+     */
+    async getQRCode(req, res) {
+        try {
+            res.json({
+                success: true,
+                data: {
+                    qrCode: this.qrCode,
+                    status: this.connectionStatus
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao obter QR Code:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Erro interno do servidor'
+            });
+        }
+    }
+
+    /**
+     * GET /api/bot/logs - Obter logs recentes
+     */
+    async getLogs(req, res) {
+        try {
+            const limit = parseInt(req.query.limit) || 50;
+            const logs = this.logs.slice(0, limit);
+            
+            res.json({
+                success: true,
+                data: {
+                    logs: logs,
+                    total: this.logs.length
+                }
+            });
+        } catch (error) {
+            console.error('Erro ao obter logs:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Erro interno do servidor'
+            });
+        }
+    }
+
+    /**
+     * POST /api/bot/restart - Reiniciar bot
+     */
+    async restartBot(req, res) {
+        try {
+            this.addLog('Reiniciando bot...');
+            
+            // Parar bot atual
+            await this.stopBotProcess();
+            
+            // Aguardar um pouco
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Iniciar novamente
+            await this.startBot(req, res);
+            
+        } catch (error) {
+            console.error('Erro ao reiniciar bot:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Erro ao reiniciar bot: ' + error.message
+            });
+        }
+    }
+}
+
+// Instância única do controller
+const botController = new BotController();
+
+module.exports = {
+    getStatus: (req, res) => botController.getStatus(req, res),
+    startBot: (req, res) => botController.startBot(req, res),
+    stopBot: (req, res) => botController.stopBot(req, res),
+    getQRCode: (req, res) => botController.getQRCode(req, res),
+    getLogs: (req, res) => botController.getLogs(req, res),
+    restartBot: (req, res) => botController.restartBot(req, res)
+};

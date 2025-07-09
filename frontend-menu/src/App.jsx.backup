@@ -1,0 +1,513 @@
+import { useState, useEffect } from 'react'
+import { ShoppingCart, Plus, Minus, Phone, MapPin, User, ChevronDown } from 'lucide-react'
+
+function App() {
+  const [produtos, setProdutos] = useState([])
+  const [carrinho, setCarrinho] = useState([])
+  const [carrinhoAberto, setCarrinhoAberto] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [dadosCliente, setDadosCliente] = useState({
+    nome: '',
+    telefone: '',
+    endereco: ''
+  })
+  
+  // Estados para seleção de gateway
+  const [showPixGateways, setShowPixGateways] = useState(false)
+  const [showCardGateways, setShowCardGateways] = useState(false)
+  const [selectedPixGateway, setSelectedPixGateway] = useState('mercadopago')
+  const [selectedCardGateway, setSelectedCardGateway] = useState('mercadopago')
+
+  const gateways = [
+    { id: 'mercadopago', name: 'MercadoPago', color: 'bg-blue-500', icon: '💳' },
+    { id: 'pagseguro', name: 'PagSeguro', color: 'bg-orange-500', icon: '🟡' },
+    { id: 'picpay', name: 'PicPay', color: 'bg-green-500', icon: '💚' }
+  ]
+
+  useEffect(() => {
+    fetchProdutos()
+  }, [])
+
+  const fetchProdutos = async () => {
+    try {
+      const response = await fetch('https://cardapio.fortalcar.com/api/products')
+      const data = await response.json()
+      setProdutos(data)
+    } catch (error) {
+      console.error('Erro ao carregar produtos:', error)
+      setProdutos([
+        { _id: '1', name: 'Pizza Margherita', price: 35.50, description: 'Molho de tomate, mussarela, manjericão' },
+        { _id: '2', name: 'Hambúrguer Clássico', price: 22.50, description: 'Pão brioche, carne 180g, queijo, alface e tomate' },
+        { _id: '3', name: 'Açaí 500ml', price: 18.00, description: 'Açaí puro com granola, banana e mel' }
+      ])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const adicionarAoCarrinho = (produto) => {
+    setCarrinho(prev => {
+      const itemExistente = prev.find(item => item._id === produto._id)
+      if (itemExistente) {
+        return prev.map(item =>
+          item._id === produto._id
+            ? { ...item, quantidade: item.quantidade + 1 }
+            : item
+        )
+      } else {
+        return [...prev, { ...produto, quantidade: 1 }]
+      }
+    })
+  }
+
+  const removerDoCarrinho = (produtoId) => {
+    setCarrinho(prev => {
+      const item = prev.find(item => item._id === produtoId)
+      if (item && item.quantidade > 1) {
+        return prev.map(item =>
+          item._id === produtoId
+            ? { ...item, quantidade: item.quantidade - 1 }
+            : item
+        )
+      } else {
+        return prev.filter(item => item._id !== produtoId)
+      }
+    })
+  }
+
+  const calcularTotal = () => {
+    return carrinho.reduce((total, item) => total + (item.price * item.quantidade), 0)
+  }
+
+  const finalizarPedido = () => {
+
+    if (carrinho.length === 0) {
+      alert('Adicione pelo menos um item ao carrinho!')
+      return
+    }
+
+    let message = `🛒 RESUMO DO PEDIDO\n\n📋 Itens selecionados no cardápio:\n`
+    message += `🛍️ *Itens do Pedido:*\n`
+
+    carrinho.forEach(item => {
+     message += `- ${item.quantidade}x ${item.name} - R$ ${(item.price * item.quantidade).toFixed(2)}\n`
+    })
+
+    message += `\n💰Total: R$ ${calcularTotal().toFixed(2).replace('.', ',')}`
+
+    const urlWhatsApp = `https://wa.me/5585989173381?text=${encodeURIComponent(message)}`
+    window.open(urlWhatsApp, '_blank')
+  }
+
+  const pagarComPix = async (gateway = selectedPixGateway) => {
+
+    if (carrinho.length === 0) {
+      alert('Adicione pelo menos um item ao carrinho!')
+      return
+    }
+
+    try {
+      setLoading(true)
+      
+      const orderData = {
+        customerName: dadosCliente.nome,
+        customerPhone: dadosCliente.telefone,
+        customerAddress: dadosCliente.endereco,
+        items: carrinho,
+        total: calcularTotal(),
+        paymentMethod: 'pix',
+        gateway: gateway
+      }
+
+      const orderResponse = await fetch('https://cardapio.fortalcar.com/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderData)
+      })
+
+      const order = await orderResponse.json()
+
+      let pixResponse
+      
+      // Escolher endpoint baseado no gateway
+      switch(gateway) {
+        case 'mercadopago':
+          pixResponse = await fetch('https://cardapio.fortalcar.com/api/payments/mercadopago/pix', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: order._id,
+              customerName: dadosCliente.nome,
+              customerEmail: dadosCliente.email || 'cliente@exemplo.com',
+              total: calcularTotal()
+            })
+          })
+          break
+          
+        case 'pagseguro':
+          pixResponse = await fetch('https://cardapio.fortalcar.com/api/payments/pagseguro/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: order._id,
+              customerName: dadosCliente.nome,
+              customerEmail: dadosCliente.email || 'cliente@exemplo.com',
+              customerPhone: dadosCliente.telefone,
+              total: calcularTotal()
+            })
+          })
+          break
+          
+        case 'picpay':
+          pixResponse = await fetch('https://cardapio.fortalcar.com/api/payments/picpay/payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: order._id,
+              customerName: dadosCliente.nome,
+              customerEmail: dadosCliente.email || 'cliente@exemplo.com',
+              customerCPF: '11111111111',
+              customerPhone: dadosCliente.telefone,
+              total: calcularTotal()
+            })
+          })
+          break
+      }
+
+      const pixData = await pixResponse.json()
+
+      if (pixData.success) {
+        const gatewayName = gateways.find(g => g.id === gateway)?.name || gateway
+        
+        if (gateway === 'mercadopago') {
+          alert(`PIX ${gatewayName} criado! Código: ${pixData.qr_code}`)
+        } else if (gateway === 'pagseguro') {
+          alert(`Pagamento ${gatewayName} criado! Redirecionando...`)
+          window.open(pixData.payment_url, '_blank')
+        } else if (gateway === 'picpay') {
+          alert(`Pagamento ${gatewayName} criado! Redirecionando...`)
+          window.open(pixData.payment_url, '_blank')
+        }
+        
+        setCarrinho([])
+        setCarrinhoAberto(false)
+      } else {
+        alert('Erro ao criar pagamento: ' + pixData.error)
+      }
+
+    } catch (error) {
+      console.error('Erro:', error)
+      alert('Erro ao processar pagamento')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const pagarComCartao = async (gateway = selectedCardGateway) => {
+    if (!dadosCliente.nome || !dadosCliente.telefone || !dadosCliente.endereco) {
+      alert('Por favor, preencha todos os dados!')
+      return
+    }
+    if (carrinho.length === 0) {
+      alert('Adicione pelo menos um item ao carrinho!')
+      return
+    }
+
+    try {
+      setLoading(true)
+      
+      const orderData = {
+        customerName: dadosCliente.nome,
+        customerPhone: dadosCliente.telefone,
+        customerAddress: dadosCliente.endereco,
+        customerEmail: dadosCliente.email || 'test@test.com',
+        items: carrinho,
+        total: calcularTotal(),
+        paymentMethod: 'card',
+        gateway: gateway
+      }
+
+      const orderResponse = await fetch('https://cardapio.fortalcar.com/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderData)
+      })
+      const order = await orderResponse.json()
+
+      let cardResponse
+
+      switch(gateway) {
+        case 'mercadopago':
+          cardResponse = await fetch('https://cardapio.fortalcar.com/api/payments/mercadopago/card', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: order._id,
+              customerName: dadosCliente.nome,
+              customerEmail: dadosCliente.email || 'test@test.com',
+              total: calcularTotal(),
+              cardData: {
+                token: 'test_token_' + Date.now(),
+                payment_method_id: 'visa',
+                installments: 1,
+                issuer_id: '310'
+              }
+            })
+          })
+          break
+          
+        case 'pagseguro':
+          cardResponse = await fetch('https://cardapio.fortalcar.com/api/payments/pagseguro/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: order._id,
+              customerName: dadosCliente.nome,
+              customerEmail: dadosCliente.email || 'test@test.com',
+              customerPhone: dadosCliente.telefone,
+              total: calcularTotal()
+            })
+          })
+          break
+          
+        case 'picpay':
+          cardResponse = await fetch('https://cardapio.fortalcar.com/api/payments/picpay/payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: order._id,
+              customerName: dadosCliente.nome,
+              customerEmail: dadosCliente.email || 'test@test.com',
+              customerCPF: '11111111111',
+              customerPhone: dadosCliente.telefone,
+              total: calcularTotal()
+            })
+          })
+          break
+      }
+
+      const cardData = await cardResponse.json()
+      
+      if (cardData.success) {
+        const gatewayName = gateways.find(g => g.id === gateway)?.name || gateway
+        
+        if (gateway === 'mercadopago') {
+          alert(`Pagamento ${gatewayName} aprovado! ID: ${cardData.payment_id}`)
+        } else {
+          alert(`Pagamento ${gatewayName} processado! Redirecionando...`)
+          if (cardData.payment_url) {
+            window.open(cardData.payment_url, '_blank')
+          }
+        }
+        
+        setCarrinho([])
+        setCarrinhoAberto(false)
+      } else {
+        alert('Erro no pagamento: ' + (cardData.error || 'Erro desconhecido'))
+      }
+    } catch (error) {
+      console.error('Erro:', error)
+      alert('Erro no pagamento: ' + error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-xl">Carregando cardápio...</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-gray-900">🍕 Delivery Express</h1>
+            <button
+              onClick={() => setCarrinhoAberto(true)}
+              className="relative bg-red-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-600"
+            >
+              <ShoppingCart size={20} />
+              Carrinho
+              {carrinho.length > 0 && (
+                <span className="absolute -top-2 -right-2 bg-yellow-400 text-black rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">
+                  {carrinho.reduce((sum, item) => sum + item.quantidade, 0)}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {produtos && produtos.length > 0 && produtos.map(produto => (
+            <div key={produto._id} className="bg-white rounded-lg shadow-md overflow-hidden">
+              <div className="p-6">
+               {produto.image && (
+  <img 
+    src={`https://cardapio.fortalcar.com${produto.image}`} 
+    alt={produto.name}
+    className="w-full h-48 object-cover rounded-lg mb-4"
+  />
+)}
+                <h3 className="text-xl font-semibold mb-2">{produto.name}</h3>
+                <p className="text-gray-600 mb-4">{produto.description}</p>
+                <div className="flex items-center justify-between">
+                  <span className="text-2xl font-bold text-green-600">
+                    R$ {produto.price.toFixed(2)}
+                  </span>
+                  <button
+                    onClick={() => adicionarAoCarrinho(produto)}
+                    className="bg-red-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-red-600"
+                  >
+                    <Plus size={16} />
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </main>
+
+      {carrinhoAberto && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold">Seu Pedido</h2>
+                <button
+                  onClick={() => setCarrinhoAberto(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {carrinho.length === 0 ? (
+                <p className="text-center text-gray-500 py-8">Carrinho vazio</p>
+              ) : (
+                <div className="space-y-4 mb-6">
+                  {carrinho && carrinho.length > 0 && carrinho.map(item => (
+                    <div key={item._id} className="flex items-center justify-between bg-gray-50 p-4 rounded-lg">
+                      <div>
+                        <h4 className="font-semibold">{item.name}</h4>
+                        <p className="text-gray-600">R$ {item.price.toFixed(2)}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => removerDoCarrinho(item._id)}
+                          className="bg-gray-200 w-8 h-8 rounded-full flex items-center justify-center"
+                        >
+                          <Minus size={16} />
+                        </button>
+                        <span className="font-bold">{item.quantidade}</span>
+                        <button
+                          onClick={() => adicionarAoCarrinho(item)}
+                          className="bg-red-500 text-white w-8 h-8 rounded-full flex items-center justify-center"
+                        >
+                          <Plus size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-xl font-bold">Total:</span>
+                  <span className="text-2xl font-bold text-green-600">
+                    R$ {calcularTotal().toFixed(2)}
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  <button
+                    onClick={finalizarPedido}
+                    className="w-full bg-green-500 text-white py-3 rounded-lg font-bold text-lg hover:bg-green-600"
+                  >
+                    Finalizar no WhatsApp
+                  </button>
+                  
+                  <div className="text-center text-gray-500 text-sm">ou pague online</div>
+                  
+                  {/* BOTÃO PIX COM DROPDOWN */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowPixGateways(!showPixGateways)}
+                      className="w-full bg-blue-500 text-white py-3 rounded-lg font-bold text-lg hover:bg-blue-600 flex items-center justify-center gap-2"
+                    >
+                      💳 Pagar com PIX
+                      <ChevronDown size={20} />
+                    </button>
+                    
+                    {showPixGateways && (
+                      <div className="absolute top-full left-0 w-full bg-white border rounded-lg shadow-lg z-10 mt-1">
+                        {gateways.map(gateway => (
+                          <button
+                            key={gateway.id}
+                            onClick={() => {
+                              setSelectedPixGateway(gateway.id)
+                              setShowPixGateways(false)
+                              pagarComPix(gateway.id)
+                            }}
+                            className={`w-full p-3 text-left hover:bg-gray-50 flex items-center gap-3 ${
+                              selectedPixGateway === gateway.id ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <span className="text-lg">{gateway.icon}</span>
+                            <span className="font-medium">{gateway.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* BOTÃO CARTÃO COM DROPDOWN */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowCardGateways(!showCardGateways)}
+                      className="w-full bg-purple-500 text-white py-3 rounded-lg font-bold text-lg hover:bg-purple-600 flex items-center justify-center gap-2"
+                    >
+                      💸 Pagar com Cartão
+                      <ChevronDown size={20} />
+                    </button>
+                    
+                    {showCardGateways && (
+                      <div className="absolute top-full left-0 w-full bg-white border rounded-lg shadow-lg z-10 mt-1">
+                        {gateways.map(gateway => (
+                          <button
+                            key={gateway.id}
+                            onClick={() => {
+                              setSelectedCardGateway(gateway.id)
+                              setShowCardGateways(false)
+                              pagarComCartao(gateway.id)
+                            }}
+                            className={`w-full p-3 text-left hover:bg-gray-50 flex items-center gap-3 ${
+                              selectedCardGateway === gateway.id ? 'bg-purple-50' : ''
+                            }`}
+                          >
+                            <span className="text-lg">{gateway.icon}</span>
+                            <span className="font-medium">{gateway.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default App

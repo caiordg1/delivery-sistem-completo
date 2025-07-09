@@ -1,0 +1,101 @@
+const dotenv = require('dotenv');
+dotenv.config();
+const http = require('http');
+const webSocketService = require('./services/websocketService');
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const orderRoutes = require('./routes/orders');
+const app = express();
+const PORT = process.env.PORT || 3000;
+const path = require('path');
+// Sistema de Logs Avançado
+const { systemLogger } = require('./config/logger');
+const { requestLogger, errorLogger } = require('./middlewares/loggerMiddleware');
+// Swagger Documentation
+const { swaggerUi, specs } = require('./config/swagger');
+app.use(cors());
+app.use(express.json());
+// Middleware de logs
+app.use(requestLogger);
+// ROTAS
+const userRoutes = require('./routes/userRoutes');
+const authRoutes = require('./routes/authRoutes');
+console.log('✅ authRoutes carregado com sucesso');
+const deliveryRoutes = require('./routes/deliveryRoutes');
+const productRoutes = require('./routes/productRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
+//const menuRoutes = require('./routes/menuRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const cashbackRoutes = require('./routes/cashbackRoutes');
+const fidelityRoutes = require('./routes/loyalty');
+const invoiceRoutes = require('./routes/invoice.routes');
+const feedbackRoutes = require('./routes/feedback.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
+const paymentRoutes = require('./routes/payments');
+const reportRoutes = require('./routes/reports');
+const satisfactionRoutes = require('./routes/satisfaction');
+const printerRoutes = require('./routes/printer');
+
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/api/auth', authRoutes);
+app.use('/api', userRoutes);
+app.use('/api', productRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api', deliveryRoutes);
+app.use('/api', uploadRoutes);
+//app.use('/api', menuRoutes);
+app.use('/api/coupons', couponRoutes);
+app.use('/api', cashbackRoutes);
+app.use('/api/loyalty', fidelityRoutes);
+app.use('/api', invoiceRoutes);
+app.use('/api', feedbackRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/bot', require('./routes/bot'));
+app.use('/api/satisfaction', satisfactionRoutes);
+app.use('/api/printer', printerRoutes);
+
+// Teste simples
+app.get('/', (req, res) => {
+  res.send('API do sistema de delivery está online!');
+});
+
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('✅ Conectado ao MongoDB!'))
+.catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err));
+// Middleware de tratamento de erros com log
+app.use(errorLogger);
+console.log('🔧 CHEGOU NO APP.LISTEN - PORT:', PORT);
+// ✅ CRIAR SERVIDOR HTTP PARA WEBSOCKET
+const server = http.createServer(app);
+
+// ✅ INICIALIZAR WEBSOCKET
+const io = webSocketService.initialize(server);
+
+// ✅ TORNAR WEBSOCKET DISPONÍVEL GLOBALMENTE
+global.webSocketService = webSocketService;
+
+server.listen(PORT, (err) => {
+  if (err) {
+    console.error('❌ERRO NO SERVER.LISTEN:', err);
+    process.exit(1);
+  }
+  console.log(`🚀Servidor rodando na porta ${PORT}`, { port: PORT, environment: process.env.NODE_ENV });
+  console.log(`🔌WebSocket ativo em http://localhost:${PORT}`);
+});
+
+// ✅ GRACEFUL SHUTDOWN
+process.on('SIGTERM', () => {
+  console.log('🔄 Encerrando servidor...');
+  webSocketService.shutdown();
+  server.close(() => {
+    console.log('✅ Servidor encerrado com sucesso');
+    process.exit(0);
+  });
+});

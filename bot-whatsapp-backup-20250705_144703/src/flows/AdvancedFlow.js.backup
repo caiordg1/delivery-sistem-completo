@@ -1,0 +1,349 @@
+// src/flows/advancedFlow.js
+// Fluxo Avançado Completo para Processamento de Pedidos
+
+const StateManager = require('../services/StateManager');
+const ValidationService = require('../services/ValidationService');
+
+class AdvancedFlow {
+    constructor() {
+        this.stateManager = new StateManager();
+        
+        console.log('[AdvancedFlow] Iniciado com sucesso');
+    }
+
+    // Processa mensagem baseada no estado atual do usuário
+    async processMessage(sock, chatId, message, userPhone) {
+        try {
+            const currentState = this.stateManager.getState(userPhone);
+            const userData = this.stateManager.getUserData(userPhone);
+            
+            console.log(`[AdvancedFlow] ${userPhone} | Estado: ${currentState} | Mensagem: ${message.substring(0, 30)}`);
+
+            // Comandos globais (funcionam em qualquer estado)
+            if (this.handleGlobalCommands(sock, chatId, message, userPhone)) {
+                return true;
+            }
+
+            // Processar baseado no estado atual
+            switch (currentState) {
+                case StateManager.STATES.CONFIRMING_ORDER:
+                    return await this.handleOrderConfirmation(sock, chatId, message, userPhone, userData);
+                
+                case StateManager.STATES.COLLECTING_NAME:
+                    return await this.handleNameCollection(sock, chatId, message, userPhone);
+                
+                case StateManager.STATES.COLLECTING_EMAIL:
+                    return await this.handleEmailCollection(sock, chatId, message, userPhone);
+                
+                case StateManager.STATES.COLLECTING_ADDRESS:
+                    return await this.handleAddressCollection(sock, chatId, message, userPhone);
+                
+                case StateManager.STATES.SELECTING_PAYMENT:
+                    return await this.handlePaymentSelection(sock, chatId, message, userPhone, userData);
+                
+                case StateManager.STATES.WAITING_PAYMENT:
+                    return await this.handlePaymentWaiting(sock, chatId, message, userPhone, userData);
+                
+                default:
+                    return false; // Não está em fluxo ativo
+            }
+
+        } catch (error) {
+            console.error('[AdvancedFlow] Erro:', error);
+            await sock.sendMessage(chatId, { 
+                text: "❌ Ocorreu um erro. Digite *cancelar* para recomeçar." 
+            });
+            return true;
+        }
+    }
+
+    // Comandos globais (cancelar, ajuda, etc)
+    handleGlobalCommands(sock, chatId, message, userPhone) {
+        const lowerMessage = message.toLowerCase().trim();
+        
+        if (['cancelar', 'cancel', 'sair', 'pare', 'parar'].includes(lowerMessage)) {
+            this.stateManager.resetSession(userPhone);
+            sock.sendMessage(chatId, { 
+                text: "❌ *Pedido cancelado!*\n\nDigite *menu* para ver nosso cardápio ou faça um novo pedido em: cardapio.fortalcar.com" 
+            });
+            return true;
+        }
+        
+        if (['atendente', 'suporte', 'humano'].includes(lowerMessage)) {
+            sock.sendMessage(chatId, { 
+                text: "🙋‍♂️ *Transferindo para atendimento humano...*\n\nEm breve um de nossos atendentes entrará em contato!" 
+            });
+            return true;
+        }
+        
+        if (['ajuda', 'help'].includes(lowerMessage)) {
+            sock.sendMessage(chatId, { 
+                text: "ℹ️ *Comandos disponíveis:*\n\n• *cancelar* - Cancelar pedido\n• *atendente* - Falar com humano\n• *menu* - Ver cardápio" 
+            });
+            return true;
+        }
+        
+        return false;
+    }
+
+    // ETAPA 1: Confirmação do pedido (SIM/NÃO)
+    async handleOrderConfirmation(sock, chatId, message, userPhone, userData) {
+        const lowerMessage = message.toLowerCase().trim();
+        
+        if (['sim', 's', 'confirmar', 'ok', 'confirmo'].includes(lowerMessage)) {
+            this.stateManager.setState(userPhone, StateManager.STATES.COLLECTING_NAME);
+            
+            await sock.sendMessage(chatId, { 
+                text: "👤 *Perfeito! Vamos finalizar seu pedido.*\n\nPara começar, qual seu *nome completo*?" 
+            });
+            return true;
+        }
+        
+        if (['não', 'nao', 'n', 'cancelar'].includes(lowerMessage)) {
+            this.stateManager.resetSession(userPhone);
+            await sock.sendMessage(chatId, { 
+                text: "❌ *Pedido cancelado!*\n\nSem problemas! Acesse nosso cardápio novamente em:\ncardapio.fortalcar.com" 
+            });
+            return true;
+        }
+        
+        await sock.sendMessage(chatId, { 
+            text: "🤔 Não entendi sua resposta.\n\n✅ Digite *SIM* para confirmar o pedido\n❌ Digite *NÃO* para cancelar" 
+        });
+        return true;
+    }
+
+    // ETAPA 2: Coleta do nome
+    async handleNameCollection(sock, chatId, message, userPhone) {
+        const validation = ValidationService.validateName(message);
+        
+        if (validation.valid) {
+            this.stateManager.updateData(userPhone, { 
+                name: validation.value,
+                firstName: validation.firstName 
+            });
+            this.stateManager.setState(userPhone, StateManager.STATES.COLLECTING_EMAIL);
+            
+            await sock.sendMessage(chatId, { 
+                text: `✅ Nome registrado: *${validation.firstName}*\n\nAgora preciso do seu *e-mail*:` 
+            });
+            return true;
+        }
+        
+        await sock.sendMessage(chatId, { 
+            text: `❌ ${validation.error}\n\nPor favor, informe seu *nome completo* (nome e sobrenome):` 
+        });
+        return true;
+    }
+
+    // ETAPA 3: Coleta do email
+    async handleEmailCollection(sock, chatId, message, userPhone) {
+        const validation = ValidationService.validateEmail(message);
+        
+        if (validation.valid) {
+            this.stateManager.updateData(userPhone, { email: validation.value });
+            this.stateManager.setState(userPhone, StateManager.STATES.COLLECTING_ADDRESS);
+            
+            await sock.sendMessage(chatId, { 
+                text: `✅ E-mail registrado: *${validation.value}*\n\n📍 *Agora preciso do endereço de entrega:*\n\nInforme o endereço completo:\n• Rua e número\n• Bairro\n• Cidade\n\nExemplo: Rua das Flores, 123, Centro, Fortaleza` 
+            });
+            return true;
+        }
+        
+        await sock.sendMessage(chatId, { 
+            text: `❌ ${validation.error}\n\nPor favor, informe um *e-mail válido*:` 
+        });
+        return true;
+    }
+
+    // ETAPA 4: Coleta do endereço
+    async handleAddressCollection(sock, chatId, message, userPhone) {
+        const validation = ValidationService.validateAddress(message);
+        
+        if (validation.valid) {
+            this.stateManager.updateData(userPhone, { address: validation.value });
+            this.stateManager.setState(userPhone, StateManager.STATES.SELECTING_PAYMENT, { 
+                paymentStep: 'timing' 
+            });
+            
+            await sock.sendMessage(chatId, { 
+                text: `✅ *Endereço confirmado:*\n${validation.value}\n\n💰 *Como prefere pagar?*\n\n1️⃣ *Pagar agora* (online)\n2️⃣ *Pagar na entrega*\n\nDigite o *número* da opção:` 
+            });
+            return true;
+        }
+        
+        await sock.sendMessage(chatId, { 
+            text: `❌ ${validation.error}\n\nPor favor, informe o endereço completo:` 
+        });
+        return true;
+    }
+
+    // ETAPA 5: Seleção de pagamento
+    async handlePaymentSelection(sock, chatId, message, userPhone, userData) {
+        const paymentStep = userData.paymentStep || 'timing';
+        
+        if (paymentStep === 'timing') {
+            const validation = ValidationService.validatePaymentTiming(message);
+            
+            if (validation.valid) {
+                this.stateManager.updateData(userPhone, { 
+                    paymentTiming: validation.timing,
+                    paymentStep: 'method' 
+                });
+                
+                if (validation.timing === 'now') {
+                    await sock.sendMessage(chatId, { 
+                        text: `✅ *${validation.label}*\n\n💳 *Escolha a forma:*\n\n1️⃣ *PIX* (aprovação instantânea)\n2️⃣ *Cartão de crédito/débito*\n\nDigite o *número* da opção:` 
+                    });
+                } else {
+                    await sock.sendMessage(chatId, { 
+                        text: `✅ *${validation.label}*\n\n💰 *Escolha a forma:*\n\n1️⃣ *Cartão* (maquininha na entrega)\n2️⃣ *Dinheiro*\n\nDigite o *número* da opção:` 
+                    });
+                }
+                return true;
+            }
+            
+            await sock.sendMessage(chatId, { 
+                text: `❌ ${validation.error}` 
+            });
+            return true;
+        }
+        
+        if (paymentStep === 'method') {
+            const paymentTiming = userData.paymentTiming;
+            let validation;
+            
+            if (paymentTiming === 'now') {
+                validation = ValidationService.validateOnlinePayment(message);
+            } else {
+                validation = ValidationService.validateDeliveryPayment(message);
+            }
+            
+            if (validation.valid) {
+                this.stateManager.updateData(userPhone, { 
+                    paymentMethod: validation.method,
+                    paymentLabel: validation.label 
+                });
+                
+                if (validation.method === 'cash') {
+                    this.stateManager.updateData(userPhone, { paymentStep: 'change' });
+                    
+                    const orderData = userData.orderData || {};
+                    const total = orderData.total || 0;
+                    
+                    await sock.sendMessage(chatId, { 
+                        text: `✅ *${validation.label}*\n\n💵 *Precisa de troco?*\n\nTotal do pedido: *R$ ${total.toFixed(2).replace('.', ',')}*\n\nInforme o valor que vai pagar:\n(Digite apenas o valor, ex: 100 ou R$ 100)` 
+                    });
+                    return true;
+                } else {
+                    return await this.finalizeOrder(sock, chatId, userPhone);
+                }
+            }
+            
+            await sock.sendMessage(chatId, { 
+                text: `❌ ${validation.error}` 
+            });
+            return true;
+        }
+        
+        if (paymentStep === 'change') {
+            const orderData = userData.orderData || {};
+            const total = orderData.total || 0;
+            const validation = ValidationService.validateChange(message, total);
+            
+            if (validation.valid) {
+                this.stateManager.updateData(userPhone, { 
+                    paymentValue: validation.paymentValue,
+                    changeValue: validation.changeValue 
+                });
+                
+                return await this.finalizeOrder(sock, chatId, userPhone);
+            }
+            
+            await sock.sendMessage(chatId, { 
+                text: `❌ ${validation.error}` 
+            });
+            return true;
+        }
+        
+        return true;
+    }
+
+    // ETAPA 6: Aguardando pagamento
+    async handlePaymentWaiting(sock, chatId, message, userPhone, userData) {
+        await sock.sendMessage(chatId, { 
+            text: "⏳ *Aguardando confirmação do pagamento...*\n\nAssim que o pagamento for confirmado, seu pedido entrará na fila de preparo!\n\nDigite *status* para acompanhar." 
+        });
+        return true;
+    }
+
+    // Finalizar pedido
+    async finalizeOrder(sock, chatId, userPhone) {
+        const userData = this.stateManager.getUserData(userPhone);
+        const orderData = userData.orderData || {};
+        
+        this.stateManager.setState(userPhone, StateManager.STATES.ORDER_COMPLETED);
+        
+        // ✅ SALVAR PEDIDO NO BACKEND
+try {
+  const api = require('../services/api');
+  const pedidoData = {
+    customerName: userData.name,
+    customerPhone: userPhone,
+    customerAddress: userData.address,
+    items: orderData.items,
+    total: orderData.total,
+    paymentMethod: userData.paymentLabel || 'whatsapp'
+  };
+  
+  console.log('Salvando pedido no backend:', pedidoData);
+  const response = await api.createOrder(pedidoData);
+  console.log('Pedido salvo com sucesso:', response.data);
+} catch (error) {
+  console.error('Erro ao salvar pedido:', error);
+}
+        let finalMessage = "🎉 *PEDIDO CONFIRMADO!*\n\n";
+        finalMessage += "📋 *Resumo final:*\n";
+        
+        // Itens do pedido
+        if (orderData.items) {
+            orderData.items.forEach(item => {
+                finalMessage += `• ${item.quantity}x ${item.name} - R$ ${item.total.toFixed(2).replace('.', ',')}\n`;
+            });
+        }
+        
+        finalMessage += `\n💰 *Total: R$ ${orderData.total ? orderData.total.toFixed(2).replace('.', ',') : '0,00'}*\n`;
+        finalMessage += `👤 *Cliente:* ${userData.name}\n`;
+        finalMessage += `📧 *E-mail:* ${userData.email}\n`;
+        finalMessage += `📍 *Endereço:* ${userData.address}\n`;
+        finalMessage += `💳 *Pagamento:* ${userData.paymentLabel}`;
+        
+        if (userData.changeValue && userData.changeValue > 0) {
+            finalMessage += `\n💵 *Troco para:* R$ ${userData.paymentValue.toFixed(2).replace('.', ',')}`;
+            finalMessage += `\n💰 *Troco:* R$ ${userData.changeValue.toFixed(2).replace('.', ',')}`;
+        }
+        
+        finalMessage += "\n\n🕐 *Tempo estimado:* 30-45 minutos";
+        finalMessage += "\n📱 *Acompanhe:* Digite *status* a qualquer momento";
+        
+        await sock.sendMessage(chatId, { text: finalMessage });
+        
+        // Limpar sessão após 5 minutos
+        setTimeout(() => {
+            this.stateManager.resetSession(userPhone);
+        }, 5 * 60 * 1000);
+        
+        return true;
+    }
+
+    // Verifica se usuário está em fluxo ativo
+    isUserInFlow(userPhone) {
+        return this.stateManager.isInActiveFlow(userPhone);
+    }
+
+    // Inicia fluxo com dados do pedido do cardápio
+    startFlowWithOrder(userPhone, orderData) {
+        this.stateManager.setState(userPhone, StateManager.STATES.CONFIRMING_ORDER);  
+          orderData: orderData
+}
+

@@ -1,0 +1,550 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import toast from 'react-hot-toast';
+
+const KanbanBoard = () => {
+  const [orders, setOrders] = useState({
+    recebido: [],
+    em_preparo: [],
+    aguardando_entregador: [],
+    saiu_para_entrega: [],
+    entregue: []
+  });
+  
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [contextMenu, setContextMenu] = useState(null);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [processingOrders, setProcessingOrders] = useState(new Set());
+  
+  // 🆕 MODAL DE DETALHES
+  const [showModal, setShowModal] = useState(false);
+  const [modalOrder, setModalOrder] = useState(null);
+
+  // Status options para menu de contexto
+  const statusOptions = [
+    { id: 'recebido', label: '📥 Recebidos', color: 'blue' },
+    { id: 'em_preparo', label: '👨‍🍳 Em Preparo', color: 'yellow' },
+    { id: 'aguardando_entregador', label: '📦 Prontos', color: 'purple' },
+    { id: 'saiu_para_entrega', label: '🚚 Em Entrega', color: 'orange' },
+    { id: 'entregue', label: '✅ Entregues', color: 'green' }
+  ];
+
+  const loadKanbanData = async () => {
+    try {
+      setIsLoading(true);
+      
+      const response = await fetch('/api/orders/kanban/data', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setOrders(data);
+        setLastUpdate(new Date());
+        
+        const totalPedidos = Object.values(data).reduce((total, column) => total + column.length, 0);
+        console.log(`✅ Kanban atualizado: ${totalPedidos} pedidos carregados`);
+      } else {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.error('❌ Erro ao carregar Kanban:', error);
+      toast.error('❌ Erro ao carregar pedidos');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadKanbanData();
+    const interval = setInterval(loadKanbanData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fechar menu de contexto ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = () => setContextMenu(null);
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  const updateOrderStatus = async (orderId, newStatus, oldStatus) => {
+    if (processingOrders.has(orderId)) {
+      console.log(`⏳ Pedido ${orderId} já está sendo processado`);
+      return false;
+    }
+
+    setProcessingOrders(prev => new Set([...prev, orderId]));
+
+    try {
+      console.log(`🔄 Atualizando pedido ${orderId}: ${oldStatus} → ${newStatus}`);
+      
+      const response = await fetch(`/api/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          status: newStatus,
+          user: 'Admin Kanban',
+          observation: `Movido de ${oldStatus.replace('_', ' ')} para ${newStatus.replace('_', ' ')} via Kanban`
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Status atualizado com sucesso:', result);
+        toast.success(`✅ ${newStatus.replace('_', ' ').toUpperCase()}`, { duration: 2000 });
+        return true;
+      } else {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('❌ Erro ao atualizar status:', error);
+      toast.error(`❌ Erro: ${error.message}`);
+      moveOrderBetweenColumns(orderId, newStatus, oldStatus);
+      return false;
+    } finally {
+      setProcessingOrders(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(orderId);
+        return newSet;
+      });
+    }
+  };
+
+  const onDragEnd = async (result) => {
+    const { destination, source, draggableId } = result;
+    
+    if (!destination) return;
+    if (destination.droppableId === source.droppableId && 
+        destination.index === source.index) return;
+
+    const orderId = draggableId;
+    const oldStatus = source.droppableId;
+    const newStatus = destination.droppableId;
+
+    const order = orders[oldStatus]?.find(o => o._id === orderId);
+    if (!order) {
+      toast.error('❌ Pedido não encontrado');
+      return;
+    }
+
+    if (processingOrders.has(orderId)) {
+      toast.info('⏳ Este pedido já está sendo processado');
+      return;
+    }
+
+    console.log(`🎯 Drag & Drop: ${order.orderNumber || orderId.slice(-6)} de ${oldStatus} para ${newStatus}`);
+
+    moveOrderBetweenColumns(orderId, oldStatus, newStatus);
+    await updateOrderStatus(orderId, newStatus, oldStatus);
+  };
+
+  const moveOrderBetweenColumns = (orderId, fromStatus, toStatus) => {
+    setOrders(prev => {
+      const order = prev[fromStatus]?.find(o => o._id === orderId);
+      if (!order) return prev;
+
+      return {
+        ...prev,
+        [fromStatus]: prev[fromStatus].filter(o => o._id !== orderId),
+        [toStatus]: [...(prev[toStatus] || []), { ...order, status: toStatus }]
+      };
+    });
+  };
+
+  // Função para menu de contexto
+  const handleContextMenu = (e, order) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setSelectedOrder(order);
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      orderId: order._id,
+      currentStatus: order.status
+    });
+  };
+
+  // 🆕 FUNÇÃO PARA ABRIR MODAL DE DETALHES
+  const handleCardClick = (e, order) => {
+    // Não abrir modal se estiver arrastando ou processando
+    if (processingOrders.has(order._id)) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setModalOrder(order);
+    setShowModal(true);
+    console.log(`📋 Modal aberto para pedido: ${order.orderNumber || order._id.slice(-6)}`);
+  };
+
+  // Mover via menu de contexto
+  const moveOrderViaMenu = async (newStatus) => {
+    if (!selectedOrder || !contextMenu) return;
+    
+    const oldStatus = selectedOrder.status;
+    const orderId = selectedOrder._id;
+    
+    if (oldStatus === newStatus) {
+      toast.info('ℹ️ Pedido já está neste status');
+      setContextMenu(null);
+      return;
+    }
+
+    if (processingOrders.has(orderId)) {
+      toast.info('⏳ Aguarde, pedido sendo processado...');
+      setContextMenu(null);
+      return;
+    }
+
+    moveOrderBetweenColumns(orderId, oldStatus, newStatus);
+    setContextMenu(null);
+    setSelectedOrder(null);
+    
+    await updateOrderStatus(orderId, newStatus, oldStatus);
+  };
+
+  const renderOrderCard = (order, index) => {
+    const isProcessing = processingOrders.has(order._id);
+    
+    return (
+      <Draggable 
+        draggableId={order._id} 
+        index={index} 
+        key={order._id}
+        isDragDisabled={isProcessing}
+      >
+        {(provided, snapshot) => (
+          <div
+            ref={provided.innerRef}
+            {...provided.draggableProps}
+            {...provided.dragHandleProps}
+            className={`
+              bg-white p-3 mb-3 rounded-lg shadow-sm border-l-4 border-blue-400 
+              transition-all duration-200 select-none relative
+              ${isProcessing ? 'opacity-75 cursor-wait' : 'cursor-move hover:cursor-pointer'}
+              ${snapshot.isDragging ? 'shadow-2xl rotate-1 scale-105 z-50 border-green-400' : 'hover:shadow-md hover:scale-[1.02]'}
+            `}
+            onContextMenu={(e) => !isProcessing && handleContextMenu(e, order)}
+            onClick={(e) => !snapshot.isDragging && handleCardClick(e, order)}
+            title={isProcessing ? "⏳ Processando..." : "🖱️ Clique para detalhes • Arraste para mover • Botão direito para menu"}
+          >
+            {isProcessing && (
+              <div className="absolute inset-0 bg-blue-100 bg-opacity-50 rounded-lg flex items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+              </div>
+            )}
+
+            <div className="flex justify-between items-start mb-2">
+              <div className="font-bold text-gray-800">
+                #{order.orderNumber || order._id.slice(-6)}
+              </div>
+              <div className="font-bold text-green-600">
+                R$ {order.total?.toFixed(2) || '0.00'}
+              </div>
+            </div>
+            
+            <div className="text-sm text-gray-600 mb-2">
+              👤 {order.customerName || 'Cliente não informado'}
+            </div>
+            
+            {order.customerPhone && (
+              <div className="text-xs text-gray-500 mb-1">
+                📞 {order.customerPhone}
+              </div>
+            )}
+            
+            <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+              <div className="text-xs text-gray-500">
+                📅 {new Date(order.createdAt).toLocaleDateString('pt-BR')}
+              </div>
+              <div className="text-xs text-gray-500">
+                ⏰ {new Date(order.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </div>
+            
+            {snapshot.isDragging && !isProcessing && (
+              <div className="absolute -top-2 -right-2 bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg shadow-lg">
+                🚀
+              </div>
+            )}
+          </div>
+        )}
+      </Draggable>
+    );
+  };
+
+  const renderColumn = (status, title, color, ordersList) => (
+    <div className={`bg-${color}-50 border-2 border-${color}-200 rounded-lg min-h-96 overflow-hidden`}>
+      <div className={`bg-${color}-500 text-white p-4 rounded-t-lg`}>
+        <div className="flex justify-between items-center">
+          <h3 className="font-bold text-lg">{title}</h3>
+          <span className="bg-white bg-opacity-30 px-3 py-1 rounded-full text-sm font-bold">
+            {ordersList.length}
+          </span>
+        </div>
+        
+        {ordersList.length > 0 && (
+          <div className="mt-2 text-sm opacity-90">
+            💰 Total: R$ {ordersList.reduce((sum, order) => sum + (order.total || 0), 0).toFixed(2)}
+          </div>
+        )}
+      </div>
+
+      <Droppable droppableId={status}>
+        {(provided, snapshot) => (
+          <div
+            ref={provided.innerRef}
+            {...provided.droppableProps}
+            className={`
+              p-4 min-h-80 transition-all duration-300 overflow-y-auto max-h-96
+              ${snapshot.isDraggingOver ? 'bg-white bg-opacity-70 scale-[1.01] border-2 border-dashed border-green-400' : ''}
+            `}
+          >
+            {ordersList.length > 0 ? (
+              ordersList.map((order, index) => renderOrderCard(order, index))
+            ) : (
+              <div className="text-center text-gray-500 py-12">
+                <div className="text-6xl mb-4 opacity-50">
+                  {status === 'recebido' && '📥'}
+                  {status === 'em_preparo' && '👨‍🍳'}
+                  {status === 'aguardando_entregador' && '📦'}
+                  {status === 'saiu_para_entrega' && '🚚'}
+                  {status === 'entregue' && '✅'}
+                </div>
+                <p className="font-medium">Nenhum pedido</p>
+                <p className="text-sm">Arraste um pedido aqui</p>
+              </div>
+            )}
+            {provided.placeholder}
+          </div>
+        )}
+      </Droppable>
+    </div>
+  );
+
+  const totalPedidos = Object.values(orders).reduce((total, column) => total + column.length, 0);
+  const totalProcessing = processingOrders.size;
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6 relative">
+      <div className="mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800">
+              Dashboard Kanban - Pedidos do Bot WhatsApp 🤖
+            </h1>
+            <p className="text-gray-600">
+              {totalPedidos} pedidos • Última atualização: {lastUpdate.toLocaleTimeString('pt-BR')}
+              {isLoading && <span className="ml-2">⏳ Carregando...</span>}
+              {totalProcessing > 0 && <span className="ml-2 text-blue-600">🔄 {totalProcessing} processando...</span>}
+            </p>
+            <p className="text-sm text-green-600 font-medium mt-1">
+              🎯 <strong>CLIQUE</strong> no card para ver detalhes • <strong>ARRASTE</strong> para mover • <strong>BOTÃO DIREITO</strong> para menu
+            </p>
+          </div>
+          
+          <button
+            onClick={loadKanbanData}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2 transition-colors"
+            disabled={isLoading}
+          >
+            <span>🔄</span>
+            <span>{isLoading ? 'Carregando...' : 'Atualizar'}</span>
+          </button>
+        </div>
+      </div>
+
+      <DragDropContext onDragEnd={onDragEnd}>
+        <div className="grid grid-cols-5 gap-6">
+          {renderColumn('recebido', '📥 Recebidos', 'blue', orders.recebido || [])}
+          {renderColumn('em_preparo', '👨‍🍳 Em Preparo', 'yellow', orders.em_preparo || [])}
+          {renderColumn('aguardando_entregador', '📦 Prontos', 'purple', orders.aguardando_entregador || [])}
+          {renderColumn('saiu_para_entrega', '🚚 Em Entrega', 'orange', orders.saiu_para_entrega || [])}
+          {renderColumn('entregue', '✅ Entregues', 'green', orders.entregue || [])}
+        </div>
+      </DragDropContext>
+
+      {/* Menu de Contexto */}
+      {contextMenu && (
+        <div 
+          className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-2 z-50 min-w-48"
+          style={{ 
+            left: contextMenu.x, 
+            top: contextMenu.y,
+            transform: 'translate(-10px, -10px)'
+          }}
+        >
+          <div className="px-3 py-2 border-b border-gray-100">
+            <p className="text-sm font-medium text-gray-700">Mover para:</p>
+          </div>
+          {statusOptions.map((option) => (
+            <button
+              key={option.id}
+              onClick={() => moveOrderViaMenu(option.id)}
+              disabled={option.id === contextMenu.currentStatus}
+              className={`
+                w-full text-left px-3 py-2 text-sm transition-colors
+                ${option.id === contextMenu.currentStatus 
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                  : 'hover:bg-gray-50 text-gray-700 cursor-pointer'
+                }
+              `}
+            >
+              {option.label}
+              {option.id === contextMenu.currentStatus && (
+                <span className="ml-2 text-xs">(atual)</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 🆕 MODAL DE DETALHES DO PEDIDO */}
+      {showModal && modalOrder && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Header do Modal */}
+            <div className="bg-green-500 text-white p-6 rounded-t-xl">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-bold">🎉 PEDIDO CONFIRMADO!</h2>
+                  <p className="opacity-90">Pedido #{modalOrder.orderNumber || modalOrder._id.slice(-6)}</p>
+                </div>
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Conteúdo do Modal */}
+            <div className="p-6 space-y-6">
+              {/* Resumo Final */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">📋 Resumo final:</h3>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="text-gray-700">
+                    <strong>Status:</strong> <span className="capitalize">{modalOrder.status?.replace('_', ' ')}</span>
+                  </p>
+                  <p className="text-gray-700 mt-1">
+                    <strong>Data:</strong> {new Date(modalOrder.createdAt).toLocaleString('pt-BR')}
+                  </p>
+                </div>
+              </div>
+
+              {/* Itens do Pedido */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">🛍️ Itens do Pedido:</h3>
+                <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                  {modalOrder.items && modalOrder.items.length > 0 ? (
+                    modalOrder.items.map((item, index) => (
+                      <div key={index} className="flex justify-between items-center">
+                        <span>- {item.quantity}x {item.name}</span>
+                        <span className="font-semibold">R$ {((item.price || 0) * (item.quantity || 0)).toFixed(2)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-500 italic">Itens não disponíveis</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Total */}
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-xl font-bold text-gray-800">💰 Total:</span>
+                  <span className="text-2xl font-bold text-green-600">R$ {modalOrder.total?.toFixed(2) || '0.00'}</span>
+                </div>
+              </div>
+
+              {/* Dados do Cliente */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">👤 Cliente:</h3>
+                <div className="bg-blue-50 rounded-lg p-4 space-y-2">
+                  <p><strong>Nome:</strong> {modalOrder.customerName || 'Não informado'}</p>
+                  {modalOrder.customerPhone && (
+                    <p><strong>📞 Telefone:</strong> {modalOrder.customerPhone}</p>
+                  )}
+                  {modalOrder.customerEmail && (
+                    <p><strong>📧 E-mail:</strong> {modalOrder.customerEmail}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Endereço */}
+              {modalOrder.customerAddress && (
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-800 mb-3">📍 Endereço:</h3>
+                  <div className="bg-purple-50 rounded-lg p-4">
+                    <p>{modalOrder.customerAddress}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Forma de Pagamento */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">💳 Pagamento:</h3>
+                <div className="bg-yellow-50 rounded-lg p-4">
+                  <p><strong>Método:</strong> {modalOrder.paymentMethod || 'WhatsApp'}</p>
+                </div>
+              </div>
+
+              {/* Tempo Estimado */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">⏱️ Tempo estimado:</h3>
+                <div className="bg-orange-50 rounded-lg p-4">
+                  <p><strong>Entrega:</strong> 30-45 minutos</p>
+                  <p className="text-sm text-gray-600 mt-1">🔔 Acompanhe: Você receberá atualizações sobre o status a qualquer momento</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer do Modal */}
+            <div className="bg-gray-50 px-6 py-4 rounded-b-xl flex justify-between items-center">
+              <div className="text-sm text-gray-500">
+                ID: {modalOrder._id}
+              </div>
+              <div className="flex space-x-3">
+                {modalOrder.customerPhone && (
+                  
+                    href={`https://wa.me/55${modalOrder.customerPhone.replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2 transition-colors"
+                  >
+                    <span>📱</span>
+                    <span>WhatsApp</span>
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <div className="mt-8 text-center text-gray-500 text-sm">
+        <p>🔄 Atualização automática a cada 30 segundos</p>
+        <p>📱 Integrado com Bot WhatsApp • 🎯 Drag & Drop + 🖱️ Clique para detalhes + Menu Botão Direito</p>
+      </div>
+    </div>
+  );
+};
+
+export default KanbanBoard;

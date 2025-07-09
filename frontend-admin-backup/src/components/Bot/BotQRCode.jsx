@@ -1,0 +1,213 @@
+// /frontend-admin/src/components/Bot/BotQRCode.jsx
+/**
+ * Componente para exibir QR Code do WhatsApp
+ * Mostra QR ASCII quando bot precisa conectar
+ */
+
+import React, { useState, useEffect } from 'react';
+
+const BotQRCode = ({ qrCode, status, onRefreshQR, isLoading }) => {
+  const [showInstructions, setShowInstructions] = useState(true);
+  const [timeRemaining, setTimeRemaining] = useState(120); // 2 minutos
+
+  // Contador regressivo para expiração do QR
+  useEffect(() => {
+    if (status === 'waiting_qr' && qrCode) {
+      setTimeRemaining(120);
+      const interval = setInterval(() => {
+        setTimeRemaining((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(interval);
+    }
+  }, [qrCode, status]);
+
+  // Não exibir se não está aguardando (CORREÇÃO: removida condição || !qrCode)
+  if (status !== 'waiting_qr') {
+    return null;
+  }
+
+  // Formatar tempo restante
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-medium text-gray-900">
+          📱 Conectar WhatsApp
+        </h3>
+        <button
+          onClick={onRefreshQR}
+          disabled={isLoading}
+          className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
+          title="Gerar novo QR Code"
+        >
+          <svg className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Status e Tempo */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-2">
+          <div className="w-3 h-3 bg-orange-400 rounded-full animate-pulse"></div>
+          <span className="text-sm text-orange-600 font-medium">
+            Aguardando escaneamento
+          </span>
+        </div>
+        <div className="text-sm text-gray-500">
+          <span className="font-mono">
+            {timeRemaining > 0 ? formatTime(timeRemaining) : 'Expirado'}
+          </span>
+        </div>
+      </div>
+
+      {/* Instruções */}
+      {showInstructions && (
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex justify-between items-start">
+            <div className="flex-1">
+              <h4 className="text-sm font-medium text-blue-900 mb-2">
+                Como conectar:
+              </h4>
+              <ol className="text-sm text-blue-700 space-y-1">
+                <li>1. Abra o WhatsApp no seu celular</li>
+                <li>2. Vá em Configurações → Aparelhos conectados</li>
+                <li>3. Toque em "Conectar um aparelho"</li>
+                <li>4. Escaneie o QR Code abaixo</li>
+              </ol>
+            </div>
+            <button
+              onClick={() => setShowInstructions(false)}
+              className="text-blue-400 hover:text-blue-600 ml-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Display */}
+      <div className="relative">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+              <p className="text-sm text-gray-500">Gerando QR Code...</p>
+            </div>
+          </div>
+        ) : timeRemaining <= 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 bg-red-50 rounded-lg border border-red-200">
+            <div className="text-center">
+              <div className="text-red-500 text-4xl mb-2">⏰</div>
+              <p className="text-red-700 font-medium mb-2">QR Code Expirado</p>
+              <p className="text-sm text-red-600 mb-4">
+                O QR Code expirou. Clique em "Gerar novo" para renovar.
+              </p>
+              <button
+                onClick={onRefreshQR}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Gerar Novo QR Code
+              </button>
+            </div>
+          </div>
+        ) : qrCode ? (
+          <div className="bg-gray-50 rounded-lg p-4 border-2 border-dashed border-gray-300">
+            <div className="text-center mb-3">
+              <span className="text-sm font-medium text-gray-600">
+                QR Code WhatsApp
+              </span>
+            </div>
+            
+            {/* QR Code ASCII */}
+            <div className="bg-white p-4 rounded border overflow-auto">
+            <pre className="text-xs leading-none font-mono text-center whitespace-pre" style={{
+  fontSize: '4px',
+  lineHeight: '4px',
+  maxWidth: '100%',
+             margin: '0 auto',
+              overflow: 'auto'
+           }}>
+            {qrCode}
+           </pre>                  
+            </div>
+            
+            {/* Área de escaneamento visual */}
+            <div className="relative mt-3">
+              <div className="absolute inset-0 border-2 border-blue-400 rounded-lg animate-pulse opacity-50"></div>
+              <div className="flex items-center justify-center h-8">
+                <span className="text-xs text-gray-500 bg-white px-2">
+                  Escaneie aqui com seu celular
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-64 bg-yellow-50 rounded-lg border border-yellow-200">
+            <div className="text-center">
+              <div className="text-yellow-600 text-4xl mb-2">🔄</div>
+              <p className="text-yellow-700 font-medium mb-2">Aguardando QR Code</p>
+              <p className="text-sm text-yellow-600 mb-4">
+                O QR Code está sendo gerado. Aguarde alguns segundos.
+              </p>
+              <button
+                onClick={onRefreshQR}
+                className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
+              >
+                Tentar Novamente
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Ações */}
+      <div className="mt-4 flex justify-between items-center">
+        <button
+          onClick={() => setShowInstructions(!showInstructions)}
+          className="text-sm text-blue-600 hover:text-blue-700"
+        >
+          {showInstructions ? 'Ocultar' : 'Mostrar'} instruções
+        </button>
+        
+        <div className="flex space-x-2">
+          <button
+            onClick={onRefreshQR}
+            disabled={isLoading}
+            className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            Gerar Novo
+          </button>
+        </div>
+      </div>
+
+      {/* Dica de Segurança */}
+      <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <div className="flex items-start space-x-2">
+          <span className="text-yellow-600 mt-0.5">🔒</span>
+          <div className="text-sm text-yellow-700">
+            <strong>Dica de Segurança:</strong> Só escaneie este QR Code se você é o administrador autorizado. 
+            Nunca compartilhe este código com terceiros.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default BotQRCode;

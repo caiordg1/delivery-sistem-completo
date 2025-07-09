@@ -1,0 +1,338 @@
+import React, { useState, useEffect } from 'react';
+
+const Satisfaction = () => {
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [feedbacks, setFeedbacks] = useState([]);
+  const [stats, setStats] = useState({});
+  const [filters, setFilters] = useState({
+    rating: 'all',
+    category: 'all',
+    status: 'all',
+    period: '30'
+  });
+
+useEffect(() => {
+    fetchData();
+  }, [filters]);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      
+      // Buscar estatísticas
+      const statsResponse = await fetch('/api/satisfaction/stats?' + new URLSearchParams({
+        period: filters.period
+      }));
+      const statsData = await statsResponse.json();
+      
+      // Buscar feedbacks
+      const feedbacksResponse = await fetch('/api/satisfaction/feedbacks?' + new URLSearchParams({
+        rating: filters.rating === 'all' ? '' : filters.rating,
+        category: filters.category === 'all' ? '' : filters.category,
+        status: filters.status === 'all' ? '' : filters.status
+      }));
+      const feedbacksData = await feedbacksResponse.json();
+      
+      if (statsData.success) {
+        setStats(statsData.data);
+      }
+      
+      if (feedbacksData.success) {
+        setFeedbacks(feedbacksData.data);
+      }
+      
+    } catch (error) {
+      console.error('Erro ao carregar dados:', error);
+      // Definir valores padrão em caso de erro
+      setStats({
+        general: { totalFeedbacks: 0, averageRating: 0, averageDeliveryTime: 0, satisfactionRate: 0 },
+        ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        alerts: { pendingNegativeFeedbacks: 0 }
+      });
+      setFeedbacks([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatDateTime = (dateString) => {
+    return new Date(dateString).toLocaleString('pt-BR');
+  };
+
+  const getStarDisplay = (rating) => {
+    return '⭐'.repeat(rating) + '☆'.repeat(5 - rating);
+  };
+
+  const getRatingColor = (rating) => {
+    if (rating >= 4) return 'text-green-600 bg-green-50';
+    if (rating >= 3) return 'text-yellow-600 bg-yellow-50';
+    return 'text-red-600 bg-red-50';
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'pending': return 'text-orange-600 bg-orange-50';
+      case 'responded': return 'text-green-600 bg-green-50';
+      default: return 'text-gray-600 bg-gray-50';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Satisfação do Cliente</h1>
+          <p className="text-gray-600">Monitoramento de feedbacks e avaliações</p>
+        </div>
+        {stats.alerts?.pendingNegativeFeedbacks > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <div className="flex items-center">
+              <span className="text-red-600 text-xl mr-2">⚠️</span>
+              <div>
+                <p className="text-red-800 font-medium">Atenção Necessária</p>
+                <p className="text-red-600 text-sm">
+                  {stats.alerts.pendingNegativeFeedbacks} feedbacks negativos precisam de resposta
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Cards de Estatísticas */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <span className="text-blue-600 text-2xl">⭐</span>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Avaliação Média</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.general?.averageRating?.toFixed(1) || 0}
+              </p>
+              <p className="text-sm text-blue-600">
+                {getStarDisplay(Math.round(stats.general?.averageRating || 0))}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <span className="text-green-600 text-2xl">😊</span>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Taxa de Satisfação</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.general?.satisfactionRate?.toFixed(1) || 0}%
+              </p>
+              <p className="text-sm text-green-600">Avaliações 4+ estrelas</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center">
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <span className="text-purple-600 text-2xl">📝</span>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Total Feedbacks</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.general?.totalFeedbacks || 0}
+              </p>
+              <p className="text-sm text-purple-600">Últimos 30 dias</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow">
+          <div className="flex items-center">
+            <div className="p-2 bg-orange-100 rounded-lg">
+              <span className="text-orange-600 text-2xl">🚚</span>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Tempo Médio</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {stats.general?.averageDeliveryTime || 0}min
+              </p>
+              <p className="text-sm text-orange-600">Tempo de entrega</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Distribuição de Avaliações */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-medium mb-4">Distribuição de Avaliações</h3>
+        <div className="space-y-3">
+          {[5, 4, 3, 2, 1].map((rating) => {
+            const count = stats.ratingDistribution?.[rating] || 0;
+            const total = stats.general?.totalFeedbacks || 1;
+            const percentage = ((count / total) * 100).toFixed(1);
+            
+            return (
+              <div key={rating} className="flex items-center space-x-3">
+                <span className="w-16 text-sm">{rating} ⭐</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full"
+                    style={{ width: `${percentage}%` }}
+                  ></div>
+                </div>
+                <span className="w-12 text-sm text-gray-600">{count}</span>
+                <span className="w-12 text-sm text-gray-500">{percentage}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <div className="flex flex-wrap gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Avaliação
+            </label>
+            <select
+              value={filters.rating}
+              onChange={(e) => setFilters({...filters, rating: e.target.value})}
+              className="border border-gray-300 rounded-md px-3 py-2"
+            >
+              <option value="all">Todas</option>
+              <option value="5">5 ⭐</option>
+              <option value="4">4 ⭐</option>
+              <option value="3">3 ⭐</option>
+              <option value="2">2 ⭐</option>
+              <option value="1">1 ⭐</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Categoria
+            </label>
+            <select
+              value={filters.category}
+              onChange={(e) => setFilters({...filters, category: e.target.value})}
+              className="border border-gray-300 rounded-md px-3 py-2"
+            >
+              <option value="all">Todas</option>
+              <option value="delivery">Entrega</option>
+              <option value="product">Produto</option>
+              <option value="service">Atendimento</option>
+              <option value="general">Geral</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Status
+            </label>
+            <select
+              value={filters.status}
+              onChange={(e) => setFilters({...filters, status: e.target.value})}
+              className="border border-gray-300 rounded-md px-3 py-2"
+            >
+              <option value="all">Todos</option>
+              <option value="pending">Pendente</option>
+              <option value="responded">Respondido</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Lista de Feedbacks */}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h3 className="text-lg font-medium">Feedbacks Recentes ({feedbacks.length})</h3>
+        </div>
+        <div className="divide-y divide-gray-200">
+          {feedbacks.map((feedback) => (
+            <div key={feedback.id} className="p-6">
+              <div className="flex justify-between items-start mb-3">
+                <div className="flex items-center space-x-3">
+                  <div className="flex-shrink-0">
+                    <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
+                      <span className="text-gray-600 font-medium">
+                        {feedback.customerName.charAt(0)}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{feedback.customerName}</p>
+                    <p className="text-sm text-gray-500">
+                      Pedido {feedback.orderId?.orderNumber} • {formatDateTime(feedback.createdAt)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRatingColor(feedback.rating)}`}>
+                    {getStarDisplay(feedback.rating)}
+                  </span>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(feedback.status)}`}>
+                    {feedback.status === 'pending' ? 'Pendente' : 'Respondido'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <p className="text-gray-700">{feedback.comment}</p>
+              </div>
+
+              <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
+                <span>Categoria: {feedback.category}</span>
+                <span>Valor: R$ {feedback.orderValue?.toFixed(2)}</span>
+                <span>Entrega: {feedback.deliveryTime}min</span>
+              </div>
+
+              {feedback.status === 'responded' && feedback.response && (
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <p className="text-sm font-medium text-gray-700 mb-1">
+                    Resposta da empresa:
+                  </p>
+                  <p className="text-sm text-gray-600">{feedback.response}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Respondido por {feedback.respondedBy}
+                  </p>
+                </div>
+              )}
+
+              {feedback.status === 'pending' && feedback.rating <= 3 && (
+                <div className="flex space-x-2">
+                  <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                    Responder
+                  </button>
+                  <button className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded text-sm">
+                    Marcar como Lido
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {feedbacks.length === 0 && (
+          <div className="text-center py-8">
+            <p className="text-gray-500">Nenhum feedback encontrado para os filtros selecionados.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Satisfaction;

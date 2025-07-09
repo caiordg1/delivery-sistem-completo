@@ -1,0 +1,32 @@
+# Dependências
+node_modules/
+*/node_modules/
+
+# Logs
+logs/
+*.log
+
+# Arquivos de ambiente
+.env
+*/.env
+
+# Arquivos temporários
+.tmp/
+temp/
+
+# Uploads
+uploads/
+*/uploads/
+
+# Auth WhatsApp
+auth_info/
+*/auth_info/
+
+# Build
+dist/
+build/
+*/dist/
+*/build/
+
+# Cache
+.cache/

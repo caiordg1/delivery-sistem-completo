@@ -1,0 +1,87 @@
+const Order = require('../models/Order');
+
+// Criar novo pedido
+exports.createOrder = async (req, res) => {
+  try {
+    const { items, total } = req.body;
+
+    const newOrder = new Order({
+      user: req.user.userId,
+      items,
+      total
+    });
+
+    await newOrder.save();
+    res.status(201).json({ message: 'Pedido criado com sucesso!', order: newOrder });
+  } catch (err) {
+    res.status(500).json({ message: 'Erro ao criar pedido.', error: err.message });
+  }
+};
+
+// Listar todos os pedidos do usuário
+exports.getOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({ user: req.user.userId });
+    res.status(200).json(orders);
+  } catch (err) {
+    res.status(500).json({ message: 'Erro ao buscar pedidos.', error: err.message });
+  }
+};
+
+// Buscar um pedido por ID
+exports.getOrderById = async (req, res) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, user: req.user.userId });
+    if (!order) return res.status(404).json({ message: 'Pedido não encontrado.' });
+
+    res.status(200).json(order);
+  } catch (err) {
+    res.status(500).json({ message: 'Erro ao buscar pedido.', error: err.message });
+  }
+};
+
+// Atualizar status do pedido
+exports.updateOrder = async (req, res) => {
+  try {
+    const { status } = req.body;
+    const updated = await Order.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.userId },
+      { status },
+      { new: true }
+    );
+
+    if (!updated) return res.status(404).json({ message: 'Pedido não encontrado.' });
+
+    res.status(200).json(updated);
+            try {
+                // Aguarda 10 minutos antes de enviar a pesquisa
+                setTimeout(async () => {
+                    await whatsappService.sendSatisfactionSurvey({
+                        orderId: updated._id,
+                        customerName: updated.customerName,
+                        customerPhone: updated.customerPhone,
+                        orderValue: updated.total
+                    });
+                }, 10 * 60 * 1000); // 10 minutos em milissegundos
+
+                console.log(`🎯 Pesquisa de satisfação agendada para o pedido ${updated._id}`);
+            } catch (error) {
+                console.error('❌ Erro ao agendar pesquisa de satisfação:', error);
+            }
+        } 
+ } catch (err) {
+    res.status(500).json({ message: 'Erro ao atualizar pedido.', error: err.message });
+  }
+};
+
+// Deletar pedido
+exports.deleteOrder = async (req, res) => {
+  try {
+    const deleted = await Order.findOneAndDelete({ _id: req.params.id, user: req.user.userId });
+    if (!deleted) return res.status(404).json({ message: 'Pedido não encontrado.' });
+
+    res.status(200).json({ message: 'Pedido deletado com sucesso!' });
+  } catch (err) {
+    res.status(500).json({ message: 'Erro ao deletar pedido.', error: err.message });
+  }
+};

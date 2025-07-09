@@ -1,0 +1,59 @@
+const dotenv = require('dotenv');
+dotenv.config();
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const orderRoutes = require('./routes/orders');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ROTAS
+const userRoutes = require('./routes/userRoutes');
+const authRoutes = require('./routes/authRoutes');
+console.log('✅ authRoutes carregado com sucesso');
+const deliveryRoutes = require('./routes/deliveryRoutes');
+const productRoutes = require('./routes/productRoutes');
+const menuRoutes = require('./routes/menuRoutes');
+const couponRoutes = require('./routes/couponRoutes');
+const cashbackRoutes = require('./routes/cashbackRoutes');
+const fidelityRoutes = require('./routes/fidelityRoutes');
+const invoiceRoutes = require('./routes/invoice.routes');
+const feedbackRoutes = require('./routes/feedback.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
+const paymentRoutes = require('./routes/payments');
+
+// TESTE TEMPORÁRIO
+app.post('/api/auth/login', (req, res) => {
+  console.log('ROTA DE TESTE ATINGIDA!');
+  res.json({ teste: 'funcionou' });
+});
+app.use('/api/user', userRoutes);
+console.log("🔍 Registrando authRoutes:", typeof authRoutes, authRoutes.stack ? authRoutes.stack.length + " rotas" : "sem stack");
+app.use('/api/auth', authRoutes);
+app.use('/api/order', orderRoutes);
+app.use('/api/delivery', deliveryRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/menu', menuRoutes);
+app.use('/api/cupons', couponRoutes);
+app.use('/api/cashback', cashbackRoutes);
+app.use('/api/fidelity', fidelityRoutes);
+app.use('/api/invoice', invoiceRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/payments', paymentRoutes);
+
+// Teste simples
+app.get('/', (req, res) => {
+  res.send('API do sistema de delivery está online!');
+});
+
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('✅ Conectado ao MongoDB!'))
+.catch(err => console.error('❌ Erro ao conectar ao MongoDB:', err));
+
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+});
